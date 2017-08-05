@@ -1,0 +1,21 @@
+
+finish_record:
+{
+    _id: {date},
+    createTime: {创建时间},
+    updateTime: {更新时间},
+    finish: {是否全部完成},
+    subTask: {全部表完成情况}
+}
+
+subTask: {
+    {表名}: {
+        updateTime: {更新时间},
+        finish: {是否当前表已经导出}
+        Map zipMap: {zip文件名}
+        Map updateMap: {更新的文件名}
+        Map deleteMap: {删除表名}
+    }
+    {表名}: {
+    }
+}

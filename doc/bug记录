@@ -1,0 +1,30 @@
+2017-05-22
+1. spring-boot 集成mongodb默认不保持连接, 且不会自动重连, 导致更新记录失败
+
+2017-05-22
+1. mongodb-java-driver bug JAVA-1196 Lot of Read Operation Failed after upgraded to driver 2.12.1
+解决方案:
+(2). builder.maxConnectionIdleTime(60000);
+
+2017-05-24
+1. mongodb 连接池断开问题还需要持续观察, CS5上已经更新了上一版 添加builder.maxConnectionIdleTime(60000) , 后续如果问题复现,
+需要考虑 TaskPeriodServiceImpl 中的接口增加重试机制, 进行两次重试, 防止第一次失败, 返回错误结果.
+
+2017-05-27
+1. 文件压缩效率太低, 900M文件压缩需要6分钟, 系统自带zip只需要8S,差距太大 需优化
+
+2017-05-28
+1. 导出index.txt如果出现中断重启的话, 会导致部分文件记录丢失, 因为index.txt是在内存中计算出来的, 服务重启,
+内存数据丢失!
+
+2017-05-29
+1. 需要对allfinish创建索引
+2. 没有任何文件也创建了index.txt文件, 如果没有数据则不产生index.txt文件??
+
+2017-06-07
+1. finish_record 中的taskMap生成条件有问题, 应该根据配置生成需要管理的表信息, 二不是通过hbase中实际产生了多少rc-开头的表,
+根据之前的方式, 在导数据过程中如果刚开始启动且rc-表没有生成的话, 会漏表信息
+
+2017-06-10
+1. 数组存储方式有BUG, 无法确认数据原子性, 如果数据上不连续, 会导致数据出现覆盖.
+2. mongodb唯一索引在从HBase导入到mongodb的时候信息丢失, 导致无法更新数据到mongodb
