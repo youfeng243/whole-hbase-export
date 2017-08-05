@@ -6,8 +6,6 @@ import com.haizhi.hbase.HBaseDao;
 import com.haizhi.model.ResultMsg;
 import com.haizhi.mongodb.PeriodTask;
 import com.haizhi.mongodb.TaskStatus;
-import com.haizhi.util.GenRecord;
-import com.haizhi.util.JsonUtil;
 import com.haizhi.util.ToolUtil;
 import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.client.Result;
@@ -53,7 +51,6 @@ public class ExecuteTask implements Callable<ResultMsg> {
 
     //批量文件句柄
     private Map<String, FileExport> updateExportMap = new HashMap<>();
-    private Map<String, FileExport> deleteExportMap = new HashMap<>();
 
     //临时文件路径
     private Map<String, String> tempPathMap = new HashMap<>();
@@ -118,10 +115,6 @@ public class ExecuteTask implements Callable<ResultMsg> {
             entry.getValue().close();
         }
 
-        for (Map.Entry<String, FileExport> entry : deleteExportMap.entrySet()) {
-            entry.getValue().close();
-        }
-
         logger.info("文件句柄关闭完成..");
     }
 
@@ -142,54 +135,24 @@ public class ExecuteTask implements Callable<ResultMsg> {
     }
 
     //获得数据块文件名
-    private String getDataFileName(String tableName, String op) {
-        return op +
-                ToolUtil.FILENAME_SEPARATOR +
-                tableName +
+    private String getDataFileName(String tableName) {
+        return tableName +
                 ToolUtil.FILENAME_SEPARATOR +
                 String.valueOf(startTimeStamp) +
                 ToolUtil.FILENAME_SEPARATOR +
                 String.valueOf(endTimeStamp);
     }
 
-    //写入删除的数据...
-    private void writeDelete(String tableName, String refRowKey) {
-
-        // 先判断当前表名是否已经创建了文件操作句柄
-        if (deleteExportMap.containsKey(tableName)) {
-            deleteExportMap.get(tableName).write(refRowKey);
-            return;
-        }
-
-        //先拼接写入文件名称 delete#wd_enterprise_data_gov-key_person#1495419000000#1495419600000
-        String fileName = getDataFileName(tableName, GenRecord.COLUMN_DELETE);
-
-        // 再拼接文件路径
-        String filePath = tmpLoadPath + fileName;
-
-        // 再生成文件操作句柄
-        FileExport fileExport = new FileExport(filePath);
-
-        //记录句柄
-        deleteExportMap.put(tableName, fileExport);
-
-        //记录压缩路径信息
-        tempPathMap.put(fileName, filePath);
-
-        //写入文件
-        fileExport.write(refRowKey);
-    }
-
     // 写入插入数据
-    private void writeInsert(String tableName, String refRowKey, String value) {
+    private void writeToFile(String tableName, String value) {
 
         FileExport fileExport = null;
 
         // 如果表的文件操作句柄还未创建, 先创建
         if (!updateExportMap.containsKey(tableName)) {
 
-            //先拼接写入文件名称 update#wd_enterprise_data_gov-key_person#1495419000000#1495419600000
-            String fileName = getDataFileName(tableName, GenRecord.COLUMN_UPDATE);
+            //先拼接写入文件名称 enterprise_data_gov#1495419000000#1495419600000
+            String fileName = getDataFileName(tableName);
 
             // 再拼接文件路径
             String filePath = tmpLoadPath + fileName;
@@ -209,24 +172,7 @@ public class ExecuteTask implements Callable<ResultMsg> {
             fileExport = updateExportMap.get(tableName);
         }
 
-        Map<String, Map<String, String>> genData = (Map<String, Map<String, String>>) JsonUtil.jsonToObject(value, Map.class);
-        assert genData != null;
-        for (Map.Entry<String, Map<String, String>> entry : genData.entrySet()) {
-
-            String family = entry.getKey();
-            Map<String, String> valueKey = entry.getValue();
-            for (Map.Entry<String, String> keyEntry : valueKey.entrySet()) {
-                String column = keyEntry.getKey();
-                String v = keyEntry.getValue();
-
-                fileExport.write(ToolUtil.genInsertData(
-                        refRowKey,
-                        family,
-                        column,
-                        v));
-            }
-
-        }
+        fileExport.write(value);
     }
 
     //删除临时文件
@@ -248,22 +194,9 @@ public class ExecuteTask implements Callable<ResultMsg> {
     private List<Map<String, String>> getFileList() {
 
         List<Map<String, String>> fileNameList = new ArrayList<>();
-        //updateExportMap -> {表名, 临时文件句柄}
-        //deleteExportMap -> {表名, 临时文件句柄}
-
         updateExportMap.forEach((tableName, fileExport) -> {
             //获得文件名
-            String fileName = getDataFileName(tableName, GenRecord.COLUMN_UPDATE);
-            if (fileExport.getWriteNum() > 0) {
-                Map<String, String> sub = new HashMap<>();
-                sub.put("fileName", fileName);
-                sub.put("tableName", tableName);
-                fileNameList.add(sub);
-            }
-        });
-
-        deleteExportMap.forEach((tableName, fileExport) -> {
-            String fileName = getDataFileName(tableName, GenRecord.COLUMN_DELETE);
+            String fileName = getDataFileName(tableName);
             if (fileExport.getWriteNum() > 0) {
                 Map<String, String> sub = new HashMap<>();
                 sub.put("fileName", fileName);
@@ -285,8 +218,6 @@ public class ExecuteTask implements Callable<ResultMsg> {
 
         long totalCount = 0;
         final long[] currentPoint = {0};
-        final long[] insertTotal = {0};
-        final long[] deleteTotal = {0};
         Table recordTable;
         ResultScanner resultScanner;
 
@@ -311,8 +242,11 @@ public class ExecuteTask implements Callable<ResultMsg> {
         do {
 
             totalCount += scanResult.listCells().parallelStream().map(cell -> {
+                // 这里的rowkey就是record_id
                 String rowKey = new String(CellUtil.cloneRow(cell));
-                String operation = new String(CellUtil.cloneQualifier(cell));
+                // 这里的key就是mongodb表名称
+                String refTableName = new String(CellUtil.cloneQualifier(cell));
+                // 这里的value就是mongo的Document
                 String value = new String(CellUtil.cloneValue(cell));
 
                 currentPoint[0] += 1;
@@ -320,25 +254,8 @@ public class ExecuteTask implements Callable<ResultMsg> {
                     logger.info("[{} - {}] 当前进度: {}", startTime, endTime, currentPoint[0]);
                 }
 
-                String[] splitList = rowKey.split("#");
-                if (splitList.length < 2) {
-                    logger.error("[{} - {}] 分割数目不正确: {}", startTime, endTime, rowKey);
-                    return 0;
-                }
-
-                String refRowKey = splitList[0];
-                String refTableName = splitList[1];
-
-                //如果是删除
-                if (Objects.equals(operation, GenRecord.COLUMN_DELETE)) {
-                    writeDelete(refTableName, refRowKey);
-                    deleteTotal[0] += 1;
-                    return 1;
-                }
-
                 // 写入插入数据
-                writeInsert(refTableName, refRowKey, value);
-                insertTotal[0] += 1;
+                writeToFile(refTableName, value);
                 return 1;
             }).count();
 
@@ -377,8 +294,6 @@ public class ExecuteTask implements Callable<ResultMsg> {
         //删除临时文件
         deleteTempFiles();
 
-        logger.info("[{} - {}] insert or update操作总数目: {}", startTime, endTime, insertTotal[0]);
-        logger.info("[{} - {}] delete操作总数目: {}", startTime, endTime, deleteTotal[0]);
         logger.info("[{} - {}] 总操作数据量为: totalCount = {}", startTime, endTime, totalCount);
         logger.info("[{} - {}] 导出任务执行完成...", startTime, endTime);
         logger.info("[{} - {}] 任务耗时: {}ms", startTime, endTime, System.currentTimeMillis() - taskStartTime);

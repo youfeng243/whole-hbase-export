@@ -29,3 +29,5 @@ nbdist/
 /lib/
 /bin/
 /conf/
+/drools-download-dir/
+/drools-export-tmp/
