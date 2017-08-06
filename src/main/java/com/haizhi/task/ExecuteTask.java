@@ -240,7 +240,7 @@ public class ExecuteTask implements Callable<ResultMsg> {
 
         logger.info("获取扫描器成功, 开始扫描区间数据...[{} - {}]", startTime, endTime);
         do {
-
+            // rowkey _record_id family data key tableName
             totalCount += scanResult.listCells().parallelStream().map(cell -> {
                 // 这里的rowkey就是record_id
                 String rowKey = new String(CellUtil.cloneRow(cell));

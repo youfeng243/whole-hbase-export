@@ -91,7 +91,7 @@ public class ScanTask implements Runnable {
 
     // 获得记录表信息
     private String getRecordTable(String businessTableName) {
-        return recordChangeFlag + ToolUtil.TABLE_SEPARATOR + businessTableName;
+        return recordChangeFlag + businessTableName;
     }
 
     // 等待任务完成, 存储完成状态
